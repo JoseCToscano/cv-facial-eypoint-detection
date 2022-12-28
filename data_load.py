@@ -1,27 +1,43 @@
 import glob
 import os
 import torch
+import random
+import math
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import matplotlib.image as mpimg
 import pandas as pd
 import cv2
+from torchvision import transforms
 
 
 class FacialKeypointsDataset(Dataset):
     """Face Landmarks dataset."""
 
-    def __init__(self, csv_file, root_dir, transform=None):
+    def __init__(self, csv_file, root_dir, transform=None, extend=1):
         """
         Args:
             csv_file (string): Path to the csv file with annotations.
             root_dir (string): Directory with all the images.
             transform (callable, optional): Optional transform to be applied
                 on a sample.
+            extend (int, optional): To extend dataset
         """
         self.key_pts_frame = pd.read_csv(csv_file)
+
+        if(extend>1):
+            '''
+            Used to make multiple copies of the same dataset, whenever the pre_processing
+            is defined (in method __getitem__),images will ranfomly be rotated/flipped(x,y). This is done to extend 
+            the dataset
+            '''
+            for i in range(1,extend):
+                df_copy =  self.key_pts_frame
+                self.key_pts_frame = pd.concat([self.key_pts_frame, df_copy])
+                
         self.root_dir = root_dir
         self.transform = transform
+        
 
     def __len__(self):
         return len(self.key_pts_frame)
@@ -38,12 +54,154 @@ class FacialKeypointsDataset(Dataset):
         
         key_pts = self.key_pts_frame.iloc[idx, 1:].values
         key_pts = key_pts.astype('float').reshape(-1, 2)
+        
         sample = {'image': image, 'keypoints': key_pts}
 
         if self.transform:
             sample = self.transform(sample)
+       
+
+        pre_processed_image, pre_processed_key_points = self.pre_processing(sample['image'], sample['keypoints'])
+        
+        if type(pre_processed_key_points) == "numpy.ndarray":
+            pre_processed_key_points = torch.from_numpy(pre_processed_key_points)
+            
+        if type(pre_processed_image) == "numpy.ndarray":
+            pre_processed_image = torch.from_numpy(pre_processed_image)
+        
+        sample = {'image': pre_processed_image, 'keypoints': pre_processed_key_points }            
 
         return sample
+    
+    def rotate_keypoints(self, keypoints, R, center):
+        """Rotate the keypoints using a rotation matrix.
+
+        Parameters
+        ----------
+        keypoints : numpy.ndarray
+            A Nx2 array of keypoints, where N is the number of keypoints
+            and each row represents a keypoint with (x, y) coordinates.
+        R : numpy.ndarray
+            A 2x2 rotation matrix.
+        center: numpy.ndarray
+            A 2x2 array indicating the origin of rotation/translation
+
+        Returns
+        -------
+        numpy.ndarray
+            A Nx2 array of rotated keypoints.
+        """
+
+        # Perform matrix multiplication to rotate the keypoints
+        rotated_keypoints = np.dot(keypoints, R.T)
+
+        # Create the translation matrix
+        T = np.array([[1, 0, center[0]],
+                      [0, 1, center[1]],
+                      [0, 0, 1]])
+
+
+        # Add a third coordinate of 1 to the coordinates
+        coordinates = rotated_keypoints[:, :2]
+        coordinates = np.hstack((coordinates, np.ones((coordinates.shape[0], 1))))
+
+        # Perform matrix multiplication to translate the coordinates
+        translated_coordinates = np.dot(coordinates, T.T)
+
+        # Return the translated coordinates with the third coordinate removed
+        translated_coordinates = translated_coordinates[:, :2]
+
+        # Return the rotated + translated keypoint coordinates with the third coordinate removed
+        return translated_coordinates
+
+    def flip_keypoints(self, keypoints, T, center):
+        """Flips key points using matrix multiplication.
+
+        Parameters
+        ----------
+        keypoints : numpy.ndarray
+            A Nx2 array of keypoints, where N is the number of keypoints
+            and each row represents a keypoint with (x, y) coordinates.
+
+
+        T: numpy.ndarray
+            A 2x2 Translation matrix, [[-1,0],[0,1]] for horizontal flip
+            [[1,0],[0,-1]] for vertical flip
+
+        center: numpy.ndarray
+            (x,y) coordinates indicating the center of translation
+
+        Returns
+        -------
+        numpy.ndarray
+            A Nx2 array of rotated keypoints.
+        """
+        flipped_keypoints = np.copy(keypoints)
+
+        # Perform matrix multiplication to flip the keypoints
+        flipped_keypoints = np.dot(flipped_keypoints, T.T)
+
+        # Create the translation matrix
+        T2 = np.array([[1, 0, center[0]],
+                       [0, 1, center[1]],
+                       [0, 0, 1]])
+
+
+        # Add a third coordinate of 1 to the coordinates
+        coordinates = flipped_keypoints[:, :2]
+        coordinates = np.hstack((coordinates, np.ones((coordinates.shape[0], 1))))
+
+        # Perform matrix multiplication to translate the coordinates
+        translated_coordinates = np.dot(coordinates, T2.T)
+
+        # Return the flippedkeypoint coordinates with the third coordinate removed
+        return translated_coordinates[:, :2]
+
+    def random_horizontal_flip(self, image, keypoints):
+        if random.random() < 1: # 100% of images
+            # Flip the image horizontally
+            image = transforms.functional.hflip(image)
+            # Flip the keypoints horizontally
+            T = np.array([[-1, 0],
+                          [ 0, 1]])
+            center = [20/50.0,0]
+            keypoints = self.flip_keypoints(keypoints, T, center)
+        return image, keypoints
+
+    def random_vertical_flip(self, image, keypoints):
+        if random.random() < 1: #100% of images
+            # Flip the image horizontally
+            image = transforms.functional.vflip(image)
+            # Flip the keypoints horizontally
+            T = np.array([[1, 0],
+                          [0,-1]])
+            center = [0,20/50.0]
+            keypoints = self.flip_keypoints(keypoints, T, center)
+        return image, keypoints
+
+    def random_rotation(self, image, keypoints):
+        # Rotate the image by a random angle
+        angle = random.uniform(-55, 55)
+        # Rotate image and keypoints with same transform
+        image = transforms.functional.rotate(image, angle)
+        # Define the angle of rotation in radians
+        theta = math.radians(angle*-1)
+
+        # Create the rotation matrix
+        R = np.array([[np.cos(theta), -np.sin(theta)],
+                      [np.sin(theta), np.cos(theta)]])
+        keypoints = self.rotate_keypoints(keypoints, R, center=[0,0])
+        return image, keypoints
+
+    # Define the transformation function
+    def pre_processing(self, image, key_points):
+
+        # Apply some random transformations to the image
+        image, key_points = self.random_horizontal_flip(image, key_points)
+        #image, key_points = self.random_rotation(image, key_points)
+        #image, key_points = self.random_vertical_flip(image, key_points)
+        return image, key_points
+
     
 
     
@@ -143,10 +301,9 @@ class RandomCrop(object):
 
 class ToTensor(object):
     """Convert ndarrays in sample to Tensors."""
-
+    
     def __call__(self, sample):
         image, key_pts = sample['image'], sample['keypoints']
-         
         # if image has no grayscale color channel, add one
         if(len(image.shape) == 2):
             # add that third color dim

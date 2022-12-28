@@ -3,11 +3,9 @@
 import torch
 from torch.autograd import Variable
 import torch.nn as nn
-import torch.nn.init as init
 import torch.nn.functional as F
 # can use the below import should you choose to initialize the weights of your Net
 import torch.nn.init as I
-
 
 class Net(nn.Module):
 
@@ -17,68 +15,49 @@ class Net(nn.Module):
         ## Definition all the layers of this CNN:
         
         ## 1. This network takes in a square (same width and height), grayscale image as input
+        # 3x3 square convolution kernel
+        ## output size = (W-F)/S +1 = (224-3)/1 +1 = 222
+        # the output Tensor for one image, will have the dimensions: (10, 222, 222)
+        # after one pool layer, this becomes (10, 111, 111)
+        self.conv1 = nn.Conv2d(1, 32, 3)
         
-        self.layer1 = nn.Sequential(
-            nn.Conv2d(1, 96, kernel_size=11, stride=4),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size = 3, stride = 2))
+        # maxpool layer
+        # pool with kernel_size=2, stride=2
+        self.pool = nn.MaxPool2d(2, 2)
         
-        self.layer2 = nn.Sequential(
-            nn.Conv2d(96, 256, kernel_size=5, stride=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size = 3, stride = 2))
+        # second conv layer: 10 inputs, 20 outputs, 3x3 conv
+        ## output size = (W-F)/S +1 = (111-3)/1 +1 = 109
+        # the output tensor will have dimensions: (20, 54, 54)
+        # after another pool layer this becomes (20, 54, 54); 5.5 is rounded down
+        self.conv2 = nn.Conv2d(32,64, 3)
         
-        self.layer3 = nn.Sequential(
-            nn.Conv2d(256, 384, kernel_size=3, stride=1),
-            nn.ReLU())
+        # 20 outputs * the 54*54 filtered/pooled map size
+        self.fc1 = nn.Linear(64*54*54, 4096)
         
-        self.layer4 = nn.Sequential(
-            nn.Conv2d(384, 384, kernel_size=3, stride=1),
-            nn.ReLU())
+        # dropout with p=0.4
+        self.fc1_drop = nn.Dropout(p=0.4)
         
-        self.layer5 = nn.Sequential(
-            nn.Conv2d(384, 256, kernel_size=3, stride=1),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size = 3, stride = 2))
-        
-        self.fc1 = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(256, 4096),
-            nn.ReLU())
-        
-        self.fc2 = nn.Sequential(
-            nn.Dropout(0.5),
-            nn.Linear(4096, 4096),
-            nn.ReLU())
+        # finally, create 10 output channels (for the 10 classes)
         # finally, create 136 output channels, 2 for each of the 68 keypoint (x, y) pairs        
-        self.fc3= nn.Sequential(
-            nn.Linear(4096, 136))
+        self.fc2 = nn.Linear(4096, 136)
 
-        # Weight initializarion using Xavier's method
-        self.initialize_weights()
 
         
     def forward(self, x):
-        x = self.layer1(x)
-        x = self.layer2(x)
-        x = self.layer3(x)
-        x = self.layer4(x)
-        x = self.layer5(x)
+
+        x = self.pool(F.relu(self.conv1(x)))
+        x = self.pool(F.relu(self.conv2(x)))
 
         # prep for linear layer
         # this line of code is the equivalent of Flatten in Keras
         x = x.view(x.size(0), -1)
         
-        x = self.fc1(x)
+        # two linear layers with dropout in between
+        x = F.relu(self.fc1(x)) 
+        x = self.fc1_drop(x)
         x = self.fc2(x)
-        x = self.fc3(x)
 
-        
+        # Weight initializarion using Xavier's method
+        # self.initialize_weights()
         # a modified x, having gone through all the layers of your model, should be returned
         return x
-    
-    def initialize_weights(self):
-        for m in self.modules():
-            if isinstance(m, nn.Conv2d):
-                print(m)
-                init.xavier_uniform_(m.weight)
