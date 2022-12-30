@@ -158,7 +158,7 @@ class FacialKeypointsDataset(Dataset):
         return translated_coordinates[:, :2]
 
     def random_horizontal_flip(self, image, keypoints):
-        if random.random() < 1: # 100% of images
+        if random.random() < 0.5: # 50% of images
             # Flip the image horizontally
             image = transforms.functional.hflip(image)
             # Flip the keypoints horizontally
@@ -169,7 +169,7 @@ class FacialKeypointsDataset(Dataset):
         return image, keypoints
 
     def random_vertical_flip(self, image, keypoints):
-        if random.random() < 1: #100% of images
+        if random.random() < 0.5: #50% of images
             # Flip the image horizontally
             image = transforms.functional.vflip(image)
             # Flip the keypoints horizontally
@@ -181,7 +181,7 @@ class FacialKeypointsDataset(Dataset):
 
     def random_rotation(self, image, keypoints):
         # Rotate the image by a random angle
-        angle = random.uniform(-55, 55)
+        angle = random.uniform(-20, 20)
         # Rotate image and keypoints with same transform
         image = transforms.functional.rotate(image, angle)
         # Define the angle of rotation in radians
@@ -198,7 +198,7 @@ class FacialKeypointsDataset(Dataset):
 
         # Apply some random transformations to the image
         image, key_points = self.random_horizontal_flip(image, key_points)
-        #image, key_points = self.random_rotation(image, key_points)
+        image, key_points = self.random_rotation(image, key_points)
         #image, key_points = self.random_vertical_flip(image, key_points)
         return image, key_points
 
